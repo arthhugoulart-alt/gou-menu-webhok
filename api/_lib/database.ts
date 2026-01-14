@@ -1,43 +1,95 @@
 /**
- * Banco de dados em memória + Vercel KV
- * Usuários premium são armazenados no Vercel KV para persistência
+ * Banco de dados usando Supabase (PostgreSQL)
  */
 
-import { kv } from '@vercel/kv';
+// Configurações Supabase (via variáveis de ambiente)
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 
 export interface PremiumUser {
     username: string;
-    activatedAt: string;
-    paymentId: string;
+    activated_at: string;
+    payment_id: string;
     amount: number;
 }
 
-const KV_KEY = 'premium_users';
+/**
+ * Helper para fazer requests ao Supabase
+ */
+async function supabaseRequest(
+    endpoint: string,
+    method: string = 'GET',
+    body?: object
+): Promise<any> {
+    const url = `${SUPABASE_URL}/rest/v1/${endpoint}`;
 
-// Fallback para memória (caso KV não esteja configurado)
-const memoryStore: Map<string, PremiumUser> = new Map();
-let kvAvailable = true;
+    const headers: Record<string, string> = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+    };
+
+    const options: RequestInit = {
+        method,
+        headers,
+    };
+
+    if (body) {
+        options.body = JSON.stringify(body);
+    }
+
+    const response = await fetch(url, options);
+
+    if (!response.ok) {
+        const error = await response.text();
+        console.error(`Supabase error: ${response.status} - ${error}`);
+        return null;
+    }
+
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+}
 
 /**
  * Adiciona usuário premium
  */
-export async function addPremiumUser(user: PremiumUser): Promise<void> {
-    const key = user.username.toLowerCase();
+export async function addPremiumUser(user: PremiumUser): Promise<boolean> {
+    try {
+        // Primeiro verifica se já existe
+        const existing = await isPremiumUser(user.username);
 
-    if (kvAvailable) {
-        try {
-            // Buscar dados existentes
-            const existing = await kv.get<Record<string, PremiumUser>>(KV_KEY) || {};
-            existing[key] = user;
-            await kv.set(KV_KEY, existing);
-            console.log(`[KV] Saved premium user: ${key}`);
-        } catch (error) {
-            console.log('[KV] Not available, using memory store');
-            kvAvailable = false;
-            memoryStore.set(key, user);
+        if (existing) {
+            // Atualiza
+            const result = await supabaseRequest(
+                `premium_users?username=eq.${user.username.toLowerCase()}`,
+                'PATCH',
+                {
+                    activated_at: user.activated_at,
+                    payment_id: user.payment_id,
+                    amount: user.amount,
+                }
+            );
+            console.log(`[Supabase] Updated premium user: ${user.username}`);
+            return true;
+        } else {
+            // Insere novo
+            const result = await supabaseRequest(
+                'premium_users',
+                'POST',
+                {
+                    username: user.username.toLowerCase(),
+                    activated_at: user.activated_at,
+                    payment_id: user.payment_id,
+                    amount: user.amount,
+                }
+            );
+            console.log(`[Supabase] Added premium user: ${user.username}`);
+            return true;
         }
-    } else {
-        memoryStore.set(key, user);
+    } catch (error) {
+        console.error('[Supabase] Error adding user:', error);
+        return false;
     }
 }
 
@@ -45,34 +97,30 @@ export async function addPremiumUser(user: PremiumUser): Promise<void> {
  * Verifica se usuário é premium
  */
 export async function isPremiumUser(username: string): Promise<PremiumUser | null> {
-    const key = username.toLowerCase();
+    try {
+        const result = await supabaseRequest(
+            `premium_users?username=eq.${username.toLowerCase()}&select=*`
+        );
 
-    if (kvAvailable) {
-        try {
-            const data = await kv.get<Record<string, PremiumUser>>(KV_KEY);
-            return data?.[key] || null;
-        } catch (error) {
-            kvAvailable = false;
-            return memoryStore.get(key) || null;
+        if (result && result.length > 0) {
+            return result[0];
         }
+        return null;
+    } catch (error) {
+        console.error('[Supabase] Error checking user:', error);
+        return null;
     }
-
-    return memoryStore.get(key) || null;
 }
 
 /**
  * Lista todos os usuários premium
  */
 export async function getAllPremiumUsers(): Promise<PremiumUser[]> {
-    if (kvAvailable) {
-        try {
-            const data = await kv.get<Record<string, PremiumUser>>(KV_KEY);
-            return data ? Object.values(data) : [];
-        } catch (error) {
-            kvAvailable = false;
-            return Array.from(memoryStore.values());
-        }
+    try {
+        const result = await supabaseRequest('premium_users?select=*');
+        return result || [];
+    } catch (error) {
+        console.error('[Supabase] Error listing users:', error);
+        return [];
     }
-
-    return Array.from(memoryStore.values());
 }
