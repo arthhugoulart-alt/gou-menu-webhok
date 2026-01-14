@@ -1,27 +1,29 @@
 {
-    "version": 2,
-    "builds": [
-        {
-            "src": "api/**/*.ts",
-            "use": "@vercel/node"
+    "functions": {
+        "api/*.ts": {
+            "runtime": "@vercel/node@3.0.0"
         }
-    ],
-    "routes": [
+    },
+    "rewrites": [
         {
-            "src": "/webhook",
-            "dest": "/api/webhook"
+            "source": "/webhook",
+            "destination": "/api/webhook"
         },
         {
-            "src": "/check/(.*)",
-            "dest": "/api/check?username=$1"
+            "source": "/check/:username",
+            "destination": "/api/check?username=:username"
         },
         {
-            "src": "/list",
-            "dest": "/api/list"
+            "source": "/list",
+            "destination": "/api/list"
         },
         {
-            "src": "/(.*)",
-            "dest": "/api/health"
+            "source": "/",
+            "destination": "/api/health"
+        },
+        {
+            "source": "/health",
+            "destination": "/api/health"
         }
     ]
 }
